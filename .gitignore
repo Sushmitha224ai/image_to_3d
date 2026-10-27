@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.DS_Store
+*.tgz
+*.zip
+data/dataset.tgz
+data/extracted_cufs/
+data/raw_cufs/
+data/synthetic_backup/
+data/raw/
+data/processed/
+.venv/
+venv/
+
+# Large Model Weights & Checkpoints (>100MB GitHub limit)
+checkpoints/
+gfpgan/weights/
+*.pth
+*.pkl

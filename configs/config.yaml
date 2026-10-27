@@ -1,0 +1,58 @@
+hardware:
+  device: "cuda"
+  fallback_device: "cpu"
+  mixed_precision: true
+  max_vram_gb: 4.0
+
+dataset:
+  img_size: 256
+  channels: 3
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  train_dir: "data/train"
+  val_dir: "data/val"
+  test_dir: "data/test"
+
+models:
+  model_1_pix2pix:
+    batch_size: 4
+    lr: 0.0002
+    epochs: 5
+    beta1: 0.5
+    lambda_l1: 100.0
+  model_2_unet:
+    batch_size: 4
+    lr: 0.0003
+    epochs: 5
+    perceptual_weight: 1.0
+    ssim_weight: 0.5
+    l1_weight: 1.0
+  model_3_resnet_gan:
+    batch_size: 2
+    lr: 0.0002
+    epochs: 5
+    lambda_fm: 10.0
+  model_4_pca_ridge:
+    n_components: 50
+    alpha: 10.0
+  model_5_knn_patch:
+    patch_size: 32
+    stride: 32
+    k_neighbors: 3
+
+selection:
+  feature_types:
+    - "sharpness"
+    - "edge_density"
+    - "contrast"
+    - "landmark_confidence"
+    - "deep_embedding"
+  meta_model: "gradient_boosting"
+
+paths:
+  checkpoints_dir: "checkpoints"
+  results_dir: "results"
+  output_dir: "output"

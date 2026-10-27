@@ -1,0 +1,2 @@
+# Windows 11, CPython 3.12, CPU-only PyTorch runtime pins.
+-r requirements-win-py312.txt

@@ -1,0 +1,7 @@
+Model Name,PSNR (dB),SSIM,MAE,MSE,Inference Time (ms)
+Pix2Pix Conditional GAN,22.97,0.734,12.08,334.69,22.5
+Deep U-Net (Perceptual Loss),25.87,0.9426,8.2,194.26,13.3
+ResNet Bottleneck LSGAN,24.68,0.8771,9.49,237.16,6.9
+Eigenface Dual-PCA + Ridge,20.33,0.7774,15.73,671.34,6.9
+Multi-Scale Patch K-NN Regressor,15.54,0.8063,25.05,2673.87,824.8
+Adaptive Multi-Model Selection (PROPOSED),25.87,0.9426,8.2,194.26,1064.1

@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Adaptive Forensic Sketch-to-2D & 3D Face Reconstruction System</title>
+  <link rel="stylesheet" href="/static/styles.css?v=31">
+  <!-- Three.js & OrbitControls from CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+  <script>
+    var selectedFile = null;
+    var scene = null, camera = null, renderer = null, controls = null, faceMesh = null;
+    var savedMeshLoader = null;
+    var savedMeshGeneration = 0;
+
+    var MODEL_NAMES = {
+      "model_1_pix2pix": "Pix2Pix Conditional GAN",
+      "model_2_unet": "Deep U-Net (Perceptual Loss)",
+      "model_3_resnet_gan": "ResNet Bottleneck LSGAN",
+      "model_4_pca_ridge": "Eigenface Dual-PCA + Ridge",
+      "model_5_knn_patch": "Multi-Scale Patch K-NN"
+    };
+
+    function onFileInputChange(input) {
+      if (input && input.files && input.files.length > 0) {
+        handleFileSelect(input.files[0]);
+      }
+    }
+
+    function handleFileSelect(file) {
+      if (!file) return;
+      selectedFile = file;
+
+      var nameDiv = document.getElementById("selectedFileName");
+      if (nameDiv) {
+        nameDiv.innerText = "Selected File: " + file.name + " (" + (file.size / 1024).toFixed(1) + " KB)";
+        nameDiv.style.display = "block";
+      }
+
+      var errDiv = document.getElementById("uploadErrorMsg");
+      if (errDiv) {
+        errDiv.innerText = "";
+        errDiv.style.display = "none";
+      }
+
+      var container = document.getElementById("sketchPreviewContainer");
+      if (container) {
+        try {
+          var objectUrl = URL.createObjectURL(file);
+          container.innerHTML = '<img src="' + objectUrl + '" alt="Sketch Preview" style="max-width:100%; max-height:100%; object-fit:contain; display:block; margin:auto; border-radius:6px;">';
+        } catch (e) {
+          var reader = new FileReader();
+          reader.onload = function(evt) {
+            container.innerHTML = '<img src="' + evt.target.result + '" alt="Sketch Preview" style="max-width:100%; max-height:100%; object-fit:contain; display:block; margin:auto; border-radius:6px;">';
+          };
+          reader.readAsDataURL(file);
+        }
+      }
+    }
+
+    async function runReconstruction() {
+      var fileInput = document.getElementById("fileInput");
+      var btnGenerate = document.getElementById("btnGenerate");
+      var statusProgress = document.getElementById("statusProgress");
+      var statusText = document.getElementById("statusText");
+
+      if (!selectedFile && fileInput && fileInput.files && fileInput.files.length > 0) {
+        selectedFile = fileInput.files[0];
+        handleFileSelect(selectedFile);
+      }
+
+      if (!selectedFile) {
+        alert("Please select a forensic sketch image first by clicking 'Choose File' or '📁 Click here to browse image files'.");
+        return;
+      }
+
+      // 1. Immediate Loading Feedback
+      if (btnGenerate) {
+        btnGenerate.disabled = true;
+        btnGenerate.innerText = "Processing... Please wait";
+        btnGenerate.style.opacity = "0.6";
+        btnGenerate.style.cursor = "not-allowed";
+      }
+
+      if (statusProgress) statusProgress.style.display = "block";
+
+      var steps = [
+        "Uploading sketch...",
+        "Preprocessing image...",
+        "Extracting input features (sharpness, edges, texture)...",
+        "Evaluating 5 candidate models (Pix2Pix, U-Net, ResNet, PCA, KNN)...",
+        "Adaptive model selection in progress...",
+        "Generating photorealistic 2D face...",
+        "Enhancing 2D clarity (Unsharp Masking & Edge Contrast)...",
+        "Reconstructing 3D mesh & rendering WebGL texture..."
+      ];
+
+      var stepIdx = 0;
+      if (statusText) statusText.innerText = steps[0];
+      var interval = setInterval(function() {
+        stepIdx = (stepIdx + 1) % steps.length;
+        if (statusText) statusText.innerText = steps[stepIdx];
+      }, 400);
+
+      var formData = new FormData();
+      formData.append("file", selectedFile);
+
+      try {
+        var response = await fetch("/api/process_sketch", {
+          method: "POST",
+          body: formData
+        });
+
+        clearInterval(interval);
+
+        if (!response.ok) {
+          var errData = await response.json().catch(function() { return {}; });
+          var errorMsg = errData.detail || ("Server returned HTTP " + response.status);
+          throw new Error(errorMsg);
+        }
+
+        if (statusText) statusText.innerText = "Complete!";
+        var data = await response.json();
+        renderResults(data);
+
+        setTimeout(function() {
+          if (statusProgress) statusProgress.style.display = "none";
+        }, 2500);
+
+      } catch (err) {
+        clearInterval(interval);
+        var failureMsg = "Reconstruction Error: " + err.message;
+        if (statusText) statusText.innerText = failureMsg;
+        var errDiv = document.getElementById("uploadErrorMsg");
+        if (errDiv) {
+          errDiv.innerText = failureMsg;
+          errDiv.style.display = "block";
+        }
+        alert(failureMsg);
+      } finally {
+        if (btnGenerate) {
+          btnGenerate.disabled = false;
+          btnGenerate.removeAttribute("disabled");
+          btnGenerate.innerText = "Run Adaptive Reconstruction";
+          btnGenerate.style.opacity = "1";
+          btnGenerate.style.cursor = "pointer";
+        }
+      }
+    }
+
+    function renderResults(data) {
+      // 1. Render Selected Model Header Badge
+      var selectedBadge = document.getElementById("selectedBadge");
+      if (selectedBadge) {
+        selectedBadge.innerText = "SELECTED MODEL: " + (data.selected_model_name || "").toUpperCase();
+        selectedBadge.style.display = "inline-block";
+      }
+
+      // 2. Render Model Scores List
+      var modelScoreList = document.getElementById("modelScoreList");
+      if (modelScoreList) {
+        modelScoreList.innerHTML = "";
+        var selectedKey = data.selected_model_key;
+
+        Object.keys(MODEL_NAMES).forEach(function(key) {
+          var isSelected = (key === selectedKey);
+          var scoreVal = (data.model_scores ? data.model_scores[key] : 0.70) * 100;
+          var probVal = (data.model_probabilities ? data.model_probabilities[key] : 0.20) * 100;
+
+          var row = document.createElement("div");
+          row.className = "score-row " + (isSelected ? "selected" : "");
+          row.innerHTML = `
+            <div class="score-info">
+              <span style="font-weight:600;">${MODEL_NAMES[key]} ${isSelected ? "← SELECTED" : ""}</span>
+              <span style="font-weight:600;">${probVal.toFixed(1)}%</span>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" style="width: ${probVal}%;"></div>
+            </div>
+          `;
+          modelScoreList.appendChild(row);
+        });
+      }
+
+      // 3. Render Selected 2D Face Output (High Definition Sharpened)
+      var container2D = document.getElementById("photo2DPreviewContainer");
+      if (container2D) {
+        container2D.innerHTML = '<img src="data:image/png;base64,' + data.generated_2d_b64 + '" alt="Generated 2D Face" style="max-width:100%; max-height:100%; object-fit:contain; border-radius:6px;">';
+      }
+      var label2D = document.getElementById("selectedModelLabel");
+      if (label2D) {
+        label2D.innerText = "Automatically Selected: " + data.selected_model_name + " (" + data.confidence_percent + "% confidence)";
+      }
+
+      // 4. Render All Candidate Previews Grid (5 Models)
+      var candidatesGrid = document.getElementById("candidatesGrid");
+      if (candidatesGrid && data.candidate_previews) {
+        candidatesGrid.innerHTML = "";
+        var selKey = data.selected_model_key;
+        Object.keys(data.candidate_previews).forEach(function(key) {
+          var isSel = (key === selKey);
+          var card = document.createElement("div");
+          card.style.cssText = "background: rgba(255,255,255,0.03); border: 1px solid " + (isSel ? "#10b981" : "rgba(255,255,255,0.08)") + "; border-radius: 8px; padding: 0.5rem; text-align: center;";
+          card.innerHTML = `
+            <img src="data:image/png;base64,${data.candidate_previews[key]}" style="width:100%; height:100px; object-fit:cover; border-radius:4px;">
+            <p style="font-size:0.7rem; color:${isSel ? '#10b981' : '#94a3b8'}; margin-top:0.35rem; font-weight:${isSel ? '700' : '400'};">
+              ${MODEL_NAMES[key] || key}
+            </p>
+          `;
+          candidatesGrid.appendChild(card);
+        });
+      }
+
+      // 5. Update Upright 3D Face Representation in Three.js Scene
+      update3DFaceMesh(data.generated_2d_b64);
+    }
+
+    function init3DViewer() {
+      var container = document.getElementById("viewer3DContainer");
+      if (!container) return;
+      var width = container.clientWidth || 400;
+      var height = container.clientHeight || 380;
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x050811);
+
+      camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+      camera.position.set(0, 0, 3.5);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(window.devicePixelRatio);
+      container.appendChild(renderer.domElement);
+
+      if (typeof THREE.OrbitControls !== 'undefined') {
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+      }
+
+      var ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+      scene.add(ambientLight);
+
+      var dirLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+      dirLight1.position.set(2, 2, 4);
+      scene.add(dirLight1);
+
+      var dirLight2 = new THREE.DirectionalLight(0x3b82f6, 0.4);
+      dirLight2.position.set(-2, -1, -2);
+      scene.add(dirLight2);
+
+      createPlaceholderMesh();
+
+      window.addEventListener("resize", function() {
+        var w = container.clientWidth;
+        var h = container.clientHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      });
+
+      animate();
+    }
+
+    function createPlaceholderMesh() {
+      if (faceMesh && scene) scene.remove(faceMesh);
+
+      var res = 32;
+      var geom = new THREE.PlaneGeometry(1.6, 2.0, res, res);
+      var pos = geom.attributes.position;
+      var uv = geom.attributes.uv;
+
+      for (var i = 0; i < pos.count; i++) {
+        var u = uv.getX(i);
+        var v = uv.getY(i);
+
+        var norm_x = (u - 0.5) * 2.0;
+        var norm_y = (v - 0.5) * 2.0;
+        var dist_sq = norm_x*norm_x + norm_y*norm_y;
+
+        var z = Math.sqrt(Math.max(0, 1.0 - dist_sq * 0.75)) * 0.45;
+        pos.setZ(i, z);
+      }
+
+      geom.computeVertexNormals();
+
+      var mat = new THREE.MeshStandardMaterial({
+        color: 0x3b82f6,
+        wireframe: true,
+        roughness: 0.4
+      });
+
+      faceMesh = new THREE.Mesh(geom, mat);
+      faceMesh.rotation.z = Math.PI; // Default upright rotation
+      scene.add(faceMesh);
+    }
+
+    function update3DFaceMesh(textureB64) {
+      if (!scene) return;
+      if (faceMesh) scene.remove(faceMesh);
+
+      var loader = new THREE.TextureLoader();
+      var texture = loader.load("data:image/png;base64," + textureB64);
+      texture.flipY = false;
+
+      var res = 48;
+      var geom = new THREE.PlaneGeometry(1.6, 2.0, res, res);
+
+      var pos = geom.attributes.position;
+      var uv = geom.attributes.uv;
+
+      for (var i = 0; i < pos.count; i++) {
+        var u = uv.getX(i);
+        var v = uv.getY(i);
+
+        var norm_x = (u - 0.5) * 2.0;
+        var norm_y = (v - 0.5) * 2.0;
+        var dist_sq = norm_x*norm_x + norm_y*norm_y;
+
+        var z_base = Math.sqrt(Math.max(0, 1.0 - dist_sq * 0.75)) * 0.45;
+        var dist_nose = Math.sqrt(Math.pow(u - 0.5, 2) + Math.pow(v - 0.55, 2));
+        var z_nose = 0.18 * Math.exp(-Math.pow(dist_nose, 2) / 0.02);
+
+        var dist_leye = Math.sqrt(Math.pow(u - 0.32, 2) + Math.pow(v - 0.68, 2));
+        var dist_reye = Math.sqrt(Math.pow(u - 0.68, 2) + Math.pow(v - 0.68, 2));
+        var z_eyes = -0.08 * (Math.exp(-Math.pow(dist_leye, 2) / 0.01) + Math.exp(-Math.pow(dist_reye, 2) / 0.01));
+
+        var z = (z_base + z_nose + z_eyes) * (dist_sq <= 1.2 ? 1 : 0);
+        pos.setZ(i, z);
+      }
+
+      geom.computeVertexNormals();
+
+      var mat = new THREE.MeshStandardMaterial({
+        map: texture,
+        roughness: 0.5,
+        metalness: 0.1,
+        side: THREE.DoubleSide
+      });
+
+      faceMesh = new THREE.Mesh(geom, mat);
+      faceMesh.rotation.z = Math.PI; // 180-degree rotation so face stands completely upright facing front!
+      scene.add(faceMesh);
+      resetCamera();
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      if (controls) controls.update();
+      if (renderer && scene && camera) renderer.render(scene, camera);
+    }
+
+    function setCameraPreset(preset) {
+      if (!camera) return;
+      switch (preset) {
+        case 'front':
+          camera.position.set(0, 0, 3.5);
+          break;
+        case 'left':
+          camera.position.set(-3.0, 0, 1.5);
+          break;
+        case 'right':
+          camera.position.set(3.0, 0, 1.5);
+          break;
+        case 'top':
+          camera.position.set(0, 3.5, 0.5);
+          break;
+      }
+      if (controls) {
+        controls.target.set(0, 0, 0);
+        controls.update();
+      }
+    }
+
+    function resetCamera() {
+      setCameraPreset('front');
+    }
+
+    async function initSavedResultsDemo() {
+      var liveStatus = document.getElementById("liveInferenceStatus");
+      var liveButton = document.getElementById("btnGenerate");
+      var hardwareBadge = document.getElementById("hardwareBadge");
+
+      try {
+        var response = await fetch("/health");
+        var health = await response.json();
+        if (!health.pipeline_ready) {
+          if (hardwareBadge) hardwareBadge.innerText = "Saved outputs demo · live inference unavailable";
+          if (liveStatus) {
+            liveStatus.innerText = health.inference_error || "Trained model checkpoints are missing. Live inference is unavailable.";
+            liveStatus.classList.add("status-unavailable");
+          }
+          if (liveButton) {
+            liveButton.disabled = true;
+            liveButton.title = "Live inference is unavailable because trained checkpoints are missing.";
+          }
+        } else {
+          if (hardwareBadge) hardwareBadge.innerText = "Live inference · " + (health.device || "device ready");
+          if (liveStatus) {
+            liveStatus.innerText = "Live inference pipeline is available.";
+            liveStatus.classList.add("status-available");
+          }
+        }
+      } catch (err) {
+        if (hardwareBadge) hardwareBadge.innerText = "Saved outputs demo · live status unverified";
+        if (liveStatus) {
+          liveStatus.innerText = "Could not verify live inference status. Saved results below remain separate.";
+          liveStatus.classList.add("status-unavailable");
+        }
+      }
+
+      var meshSelect = document.getElementById("savedMeshSelect");
+      if (meshSelect) loadSavedDemoMesh(meshSelect.value);
+    }
+
+    function loadSavedDemoMesh(meshPath) {
+      var status = document.getElementById("savedMeshStatus");
+      var download = document.getElementById("savedMeshDownload");
+      var meshSelect = document.getElementById("savedMeshSelect");
+      if (!meshPath || !scene) return;
+
+      if (typeof THREE.GLTFLoader !== "function") {
+        if (status) status.innerText = "GLB loader did not load. Check the Three.js CDN connection.";
+        return;
+      }
+
+      var generation = ++savedMeshGeneration;
+      var loader = savedMeshLoader || (savedMeshLoader = new THREE.GLTFLoader());
+      if (status) status.innerText = "Loading previously saved mesh...";
+      if (download) {
+        download.href = meshPath;
+        download.download = meshSelect.options[meshSelect.selectedIndex].text + ".glb";
+      }
+
+      loader.load(meshPath, function(gltf) {
+        if (generation !== savedMeshGeneration) {
+          disposeMesh(gltf.scene);
+          return;
+        }
+        if (faceMesh) {
+          scene.remove(faceMesh);
+          disposeMesh(faceMesh);
+        }
+
+        faceMesh = gltf.scene;
+        var bounds = new THREE.Box3().setFromObject(faceMesh);
+        var center = bounds.getCenter(new THREE.Vector3());
+        faceMesh.position.sub(center);
+        var size = bounds.getSize(new THREE.Vector3());
+        var maxDimension = Math.max(size.x, size.y, size.z);
+        if (maxDimension > 0) faceMesh.scale.setScalar(2.2 / maxDimension);
+        scene.add(faceMesh);
+        resetCamera();
+        if (status) status.innerText = "Showing a previously saved GLB; it was not generated from the current upload.";
+      }, undefined, function(error) {
+        if (generation === savedMeshGeneration && status) {
+          status.innerText = "Could not load saved mesh: " + (error.message || "request failed");
+        }
+      });
+    }
+
+    function disposeMesh(object) {
+      object.traverse(function(child) {
+        if (!child.isMesh) return;
+        if (child.geometry) child.geometry.dispose();
+        var materials = Array.isArray(child.material) ? child.material : [child.material];
+        materials.forEach(function(material) {
+          if (!material) return;
+          if (material.map) material.map.dispose();
+          material.dispose();
+        });
+      });
+    }
+
+    document.addEventListener("DOMContentLoaded", function() {
+      try {
+        init3DViewer();
+        initSavedResultsDemo();
+      } catch (err) {
+        console.warn("3D Viewer init warning:", err);
+      }
+    });
+  </script>
+</head>
+<body>
+  <header>
+    <div>
+      <h1 class="brand-title">Adaptive Multi-Model Forensic Sketch-to-2D & 3D Face System</h1>
+      <p class="subtitle">Input-Specific Automatic Model Selection & 3D Face Reconstruction</p>
+    </div>
+    <div class="hardware-badge" id="hardwareBadge">Checking runtime status…</div>
+  </header>
+
+  <main>
+    <div class="dashboard-grid">
+      <!-- Left Panel: Input Upload & Model Selection Results -->
+      <aside>
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">1. Upload Forensic Sketch</h2>
+          </div>
+          <p class="live-status status-unavailable" id="liveInferenceStatus">
+            Checking whether trained checkpoints are available...
+          </p>
+
+          <!-- HTML5 Label for native OS File Picker activation -->
+          <label for="fileInput" class="drop-zone" id="dropZone" style="display: block; cursor: pointer; margin-bottom: 0.75rem;">
+            <p style="font-size: 0.9rem; color: var(--text-muted); pointer-events: none;">Drag & drop forensic sketch image here</p>
+            <p style="font-size: 0.85rem; color: #60a5fa; margin-top: 0.5rem; font-weight: 600; pointer-events: none; text-decoration: underline;">
+              📁 Click here to browse image files
+            </p>
+          </label>
+
+          <!-- Standard Visible Native File Input with inline onchange handler -->
+          <div style="margin-bottom: 0.75rem;">
+            <input type="file" id="fileInput" accept="image/*" onchange="onFileInputChange(this)" style="display: block; width: 100%; font-size: 0.82rem; color: var(--text-main); border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 8px; padding: 0.5rem; background: rgba(15, 23, 42, 0.8); cursor: pointer;">
+          </div>
+
+          <div id="selectedFileName" style="display: none; font-size: 0.8rem; color: #10b981; font-weight: 600; text-align: center; margin-bottom: 0.5rem; background: rgba(16, 185, 129, 0.1); padding: 0.4rem; border-radius: 6px; border: 1px solid rgba(16, 185, 129, 0.3);"></div>
+          <div id="uploadErrorMsg" style="display: none; color: #f87171; font-size: 0.82rem; margin-bottom: 0.5rem; text-align: center; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 0.6rem; word-break: break-word;"></div>
+
+          <div class="preview-container" id="sketchPreviewContainer" style="width: 100%; height: 240px; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #050811; border: 1px solid var(--panel-border);">
+            <p style="font-size: 0.8rem; color: #475569;" id="sketchPreviewPlaceholder">Sketch Preview</p>
+          </div>
+
+          <!-- Primary Reconstruction Button with inline onclick handler -->
+          <button class="btn-primary" id="btnGenerate" onclick="runReconstruction()" style="cursor: pointer; opacity: 1; background: linear-gradient(135deg, var(--primary-accent), var(--secondary-accent)); margin-top: 1rem; width: 100%; padding: 0.85rem; border: none; border-radius: 10px; color: white; font-weight: 600;">
+            Run Adaptive Reconstruction
+          </button>
+
+          <!-- Step-by-Step Status Progress Bar -->
+          <div id="statusProgress" style="display: none; margin-top: 1rem; padding: 0.75rem; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; font-size: 0.82rem; color: #60a5fa; text-align: center; font-weight: 600;">
+            <span id="statusText">Processing... Please wait</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header" style="flex-wrap: wrap; gap: 0.5rem;">
+            <h2 class="card-title">2. Model Selection Engine</h2>
+            <span id="selectedBadge" style="display:none; font-size:0.78rem; color:#10b981; font-weight:700; background: rgba(16,185,129,0.15); padding:0.25rem 0.6rem; border-radius:12px; border:1px solid rgba(16,185,129,0.3);">
+              SELECTED MODEL: -
+            </span>
+          </div>
+          <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+            Evaluates 5 distinct candidate models per sketch (Zero GT leakage):
+          </p>
+
+          <div class="model-score-list" id="modelScoreList">
+            <div style="font-size: 0.82rem; color: #64748b; text-align: center; padding: 1rem;">
+              Upload sketch and click 'Run Adaptive Reconstruction' to view scores.
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Right Panel: Generated Outputs (2D Photo & Interactive 3D Viewer) -->
+      <section>
+        <div class="outputs-grid">
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Generated 2D Face</h2>
+            </div>
+            <div class="preview-container" id="photo2DPreviewContainer">
+              <p style="font-size: 0.8rem; color: #475569;">Selected Model 2D Output</p>
+            </div>
+            <p id="selectedModelLabel" style="font-size: 0.8rem; color: #60a5fa; margin-top: 0.5rem; text-align: center; font-weight: 500;">
+              No model selected yet
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Interactive 3D Face Viewer</h2>
+            </div>
+            <div class="viewer-3d-container" id="viewer3DContainer">
+              <!-- Three.js Canvas appended here -->
+              <div class="viewer-controls">
+                <button class="btn-ctrl" onclick="setCameraPreset('front')">Front</button>
+                <button class="btn-ctrl" onclick="setCameraPreset('left')">Left</button>
+                <button class="btn-ctrl" onclick="setCameraPreset('right')">Right</button>
+                <button class="btn-ctrl" onclick="setCameraPreset('top')">Top</button>
+                <button class="btn-ctrl" onclick="resetCamera()">Reset</button>
+              </div>
+            </div>
+            <div class="downloads-row">
+              <a href="/api/download_3d/obj" class="btn-download" download>Download OBJ</a>
+              <a href="/api/download_3d/ply" class="btn-download" download>Download PLY</a>
+              <a href="/api/download_3d/glb" class="btn-download" download>Download GLB</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- All Candidate Previews Grid -->
+        <div class="card" style="margin-top: 1.5rem;">
+          <div class="card-header">
+            <h2 class="card-title">Candidate Models Comparison (All 5 Outputs)</h2>
+          </div>
+          <div id="candidatesGrid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; margin-top: 0.75rem;">
+            <!-- Candidate cards dynamically rendered -->
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <section class="saved-demo card" aria-labelledby="savedDemoTitle">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title" id="savedDemoTitle">Saved Results Demo</h2>
+          <p class="saved-demo-disclaimer">
+            Previously saved project assets for presentation only. These images, charts, and meshes were not generated from the current upload; live inference and adaptive selection are separate.
+          </p>
+        </div>
+        <span class="saved-output-badge">PREVIOUSLY SAVED OUTPUTS</span>
+      </div>
+
+      <div class="saved-images-grid">
+        <figure class="saved-asset">
+          <img src="/output/2d/reconstructed_face_2d.png" alt="Previously saved 2D reconstructed face">
+          <figcaption>Saved 2D result — reconstructed_face_2d.png</figcaption>
+        </figure>
+        <figure class="saved-asset">
+          <img src="/output/2d/sketch_result_2d.png" alt="Previously saved 2D sketch result">
+          <figcaption>Saved 2D result — sketch_result_2d.png</figcaption>
+        </figure>
+      </div>
+
+      <div class="saved-mesh-controls">
+        <label for="savedMeshSelect">Previously saved 3D mesh</label>
+        <select id="savedMeshSelect" onchange="loadSavedDemoMesh(this.value)">
+          <option value="/output/3d/reconstructed_face.glb">Reconstructed face</option>
+          <option value="/output/3d/sketch_result.glb">Sketch result</option>
+          <option value="/output/3d/eval_0.glb">Evaluation 0</option>
+          <option value="/output/3d/eval_1.glb">Evaluation 1</option>
+          <option value="/output/3d/eval_2.glb">Evaluation 2</option>
+        </select>
+        <a class="btn-download" id="savedMeshDownload" href="/output/3d/reconstructed_face.glb" download="reconstructed_face.glb">Download selected GLB</a>
+      </div>
+      <p class="saved-mesh-status" id="savedMeshStatus" role="status">Preparing saved mesh viewer...</p>
+
+      <div class="saved-charts-grid">
+        <figure class="saved-asset">
+          <img src="/results/model_comparison.png" alt="Previously saved model comparison chart">
+          <figcaption>Previously saved model comparison chart</figcaption>
+        </figure>
+        <figure class="saved-asset">
+          <img src="/results/ablation_study.png" alt="Previously saved ablation study chart">
+          <figcaption>Previously saved ablation study chart</figcaption>
+        </figure>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

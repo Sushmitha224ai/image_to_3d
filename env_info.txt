@@ -1,0 +1,9 @@
+===== HARDWARE CHECK =====
+CPU / OS: AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD (Windows 11)
+Python: 3.12.0
+PyTorch: 2.5.1+cu121
+CUDA Available: True
+CUDA Version: 12.1
+GPU Name: NVIDIA GeForce RTX 3050 Laptop GPU
+GPU VRAM (GB): 4.0
+==========================

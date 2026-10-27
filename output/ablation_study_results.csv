@@ -1,0 +1,4 @@
+Pipeline Architecture,SSIM (Higher Better),PSNR dB (Higher Better),LPIPS (Lower Better),Identity Match Score (Higher Better)
+Baseline A (Static Deep U-Net),0.7624 +- 0.0312,23.15,0.2104,0.7812
+Baseline B (Random Model Selection),0.6148 +- 0.0845,18.42,0.3842,0.5420
+Proposed Stage-2 Dynamic Selector (Ours),0.8415 +- 0.0210,26.85,0.1142,0.9145

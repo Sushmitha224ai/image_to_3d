@@ -1,0 +1,7 @@
+Configuration,PSNR (dB),SSIM
+Fixed Model 1 (Pix2Pix),22.97,0.734
+Fixed Model 2 (Deep U-Net),25.87,0.9426
+Fixed Model 3 (ResNet LSGAN),24.68,0.8771
+Adaptive (Quality Features Only),24.84,0.8955
+Adaptive (Structural Features Only),25.35,0.9143
+Adaptive (Full Combined Features - PROPOSED),25.87,0.9426
